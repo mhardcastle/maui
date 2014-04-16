@@ -174,8 +174,8 @@ char *getreq(int);
 
 extern int pbs_errno; 
 
-extern int get_svrport(const char *,char *,int);
-extern int openrm(char *,int);
+extern unsigned int get_svrport(char *,char *,unsigned int);
+extern int openrm(char *,unsigned int);
 extern int addreq(int,char *);
 extern int closerm(int);
 extern int pbs_stagein(int,char *,char *,char *);
