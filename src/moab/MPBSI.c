@@ -2484,33 +2484,37 @@ int MPBSNodeLoad(
       while (ptr != NULL)
         {
         char *tail;
+	int dummy1,dummy2;
 
         /* job list specified as virtual tasks, '<JOBID>/<TASKID>' */
         /*  or <TASKID>/<JOBID> */
 
-        strtol(ptr,&tail,10);
+	if (sscanf(ptr,"%i-%i/%s",&dummy1,&dummy2,&JobID)!=3)
+	  {
+	
+	    strtol(ptr,&tail,10);
 
-        if ((tail > ptr) && 
-           ((tail[0] == '/') || (tail[0] == '\0')))
+	    if ((tail > ptr) && 
+		((tail[0] == '/') || (tail[0] == '\0')))
+	      {
+		/* FORMAT:  <TASKID>/<JOBID> */
+
+		MUStrCpy(JobID,tail + 1,MAX_MNAME);
+	      }
+	    else
           {
-          /* FORMAT:  <TASKID>/<JOBID> */
+	    /* FORMAT:  <JOBID>[/<TASKID>] */
 
-          MUStrCpy(JobID,tail + 1,MAX_MNAME);
+	    if ((tail = strchr(ptr,'/')) == NULL)
+	      {
+		tail = ptr + strlen(ptr);
+	      }
+
+	    MUStrCpy(JobID,ptr,MIN(MAX_MNAME,tail - ptr + 1));
           }
-        else
-          {
-          /* FORMAT:  <JOBID>[/<TASKID>] */
-
-          if ((tail = strchr(ptr,'/')) == NULL)
-            {
-            tail = ptr + strlen(ptr);
-            }
-
-          MUStrCpy(JobID,ptr,MIN(MAX_MNAME,tail - ptr + 1));
-          }
-
+	  }
         N->TaskCount ++;
-
+	
         if (MJobFind(JobID,&J,0) == SUCCESS)
           {
           N->DRes.Procs += MAX(1,J->Req[0]->DRes.Procs);  /* FIXME */
@@ -3181,30 +3185,39 @@ int MPBSNodeUpdate(
       while (ptr != NULL)
         {
         char *tail;
-
+	int dummy1,dummy2,jobs;
+	
         /* job list specified as virtual tasks, '<JOBID>/<TASKID>' */
         /*  or <TASKID>/<JOBID> */
+	/* check for new Torque behaviour */
+	if (sscanf(ptr,"%i-%i/%s",&dummy1,&dummy2,&JobID)==3)
+	  {
+	    jobs=dummy2-dummy1+1;
+	  }
+	else 
+	  {
+	    jobs=1;
+	    strtol(ptr,&tail,10);
 
-        strtol(ptr,&tail,10);
+	    if ((tail > ptr) &&
+		((tail[0] == '/') || (tail[0] == '\0')))
+	      {
+		/* FORMAT:  <TASKID>/<JOBID> */
 
-        if ((tail > ptr) &&
-           ((tail[0] == '/') || (tail[0] == '\0')))
-          {
-          /* FORMAT:  <TASKID>/<JOBID> */
+		MUStrCpy(JobID,tail + 1,MAX_MNAME);
+	      }
+	    else
+	      {
+		/* FORMAT:  <JOBID>[/<TASKID>] */
 
-          MUStrCpy(JobID,tail + 1,MAX_MNAME);
-          }
-        else
-          {
-          /* FORMAT:  <JOBID>[/<TASKID>] */
+		if ((tail = strchr(ptr,'/')) == NULL)
+		  {
+		    tail = ptr + strlen(ptr);
+		  }
 
-          if ((tail = strchr(ptr,'/')) == NULL)
-            {
-            tail = ptr + strlen(ptr);
-            }
-
-          MUStrCpy(JobID,ptr,MIN(MAX_MNAME,tail - ptr + 1));
-          }
+		MUStrCpy(JobID,ptr,MIN(MAX_MNAME,tail - ptr + 1));
+	      }
+	  }
 
         N->TaskCount ++;
 
@@ -3218,12 +3231,14 @@ int MPBSNodeUpdate(
             {
             tmpProcs = MAX(1,J->Req[0]->DRes.Procs);
             }
-
+	  tmpProcs=MAX(jobs,tmpProcs);
+	  
           N->DRes.Procs = MIN(N->DRes.Procs + tmpProcs,N->CRes.Procs);
 
           DBG(3,fPBS) DPrint("INFO:     job %s adds %d processors per task to node %s (%d)\n",
             J->Name,
-            J->Req[0]->DRes.Procs,
+			     tmpProcs,
+			     /*J->Req[0]->DRes.Procs, */
             N->Name,
             N->DRes.Procs);               
 
@@ -3254,7 +3269,7 @@ int MPBSNodeUpdate(
             JobID,
             N->Name);
 
-          N->DRes.Procs += 1;
+          N->DRes.Procs += jobs;
           }
 
         if ((N->State == mnsIdle) || (N->State == mnsActive))
@@ -4712,7 +4727,8 @@ int __MPBSGetTaskList(
   int     TCSet;
   int     HLSet;
   int     PPNSet;
-
+  char    *slash;
+  
   short  *TLPtr;
 
   short   tmpTaskList[MAX_MNODE];
@@ -4785,9 +4801,11 @@ int __MPBSGetTaskList(
     host = MUStrTok(tmpHostName,":",&TokPtr2);  
 
     /* remove virtual host id */
-
-    if ((tail = strchr(tmpHostName,'/')) != NULL)
+    slash=NULL;
+    if ((tail = strchr(tmpHostName,'/')) != NULL) {
       *tail = '\0';
+      slash=tail+1;
+    }
 
     tmpTaskCount = (int)strtol(tmpHostName,&tail,10);
  
@@ -4816,11 +4834,23 @@ int __MPBSGetTaskList(
         }
       }    /* END if ((tmpTaskCount != 0) && (*tail == '\0')) */
 
+    /* check for new Torque core allocation */
+    
+    if (slash != NULL) {
+	int dummy1,dummy2;
+        if (sscanf(slash,"%i-%i",&dummy1,&dummy2)==2)
+	  {
+	    ppn=1+dummy2-dummy1;
+	    PPNSet = TRUE;
+	  }
+    }
+    
     /* check for ppn/feature info */
 
     ptr2 = MUStrTok(NULL,":",&TokPtr2);
 
     while (ptr2 != NULL)
+      
       {
       if (strncmp(ptr2,"ppn=",strlen("ppn=")) == 0)
         {
@@ -4908,7 +4938,7 @@ int __MPBSGetTaskList(
     }
 
   DBG(7,fPBS) DPrint("INFO:     %d host task(s) located for job\n",
-    tindex);
+		     tindex);
 
   if (rqindex > 0)
     {
